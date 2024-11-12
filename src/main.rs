@@ -1,3 +1,5 @@
+extern crate nalgebra_glm as glm;
+
 use std::borrow::Cow;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -8,6 +10,8 @@ use winit::{
     event_loop::EventLoop,
     window::Window,
 };
+
+mod engine;
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut size = window.inner_size();
@@ -60,15 +64,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     });
 
     let swapchain_capabilities = surface.get_capabilities(&adapter);
-    let swapchain_format = swapchain_capabilities.formats[0];
+    let swapchain_format = *swapchain_capabilities
+        .formats
+        .first()
+        .expect("Incompatable adapter for this surface");
 
     const VERTICES: &[f32] = &[
         0.1, 0.1, //
         0.4, 0.2, //
         0.2, 0.4, //
     ];
-
-    let a = Box::new(1);
 
     let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Triangle"),
