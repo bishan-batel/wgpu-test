@@ -1,9 +1,12 @@
 extern crate nalgebra_glm as glm;
 
+use log::info;
 use std::borrow::Cow;
 use wgpu::{
+    core::global::Global,
     util::{BufferInitDescriptor, DeviceExt},
-    BufferUsages, VertexAttribute,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BufferAsyncError, BufferUsages,
 };
 use winit::{
     dpi::PhysicalSize,
@@ -12,7 +15,7 @@ use winit::{
     window::Window,
 };
 
-use glm::Vec2;
+use glm::{Vec2, Vec4};
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
     // window / framebuffer size
@@ -24,7 +27,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     // global WGPU instance
     let instance = wgpu::Instance::default();
 
-    let surface = instance.create_surface(&window).unwrap();
+    let surface = instance
+        .create_surface(&window)
+        .expect("Failed to create window surface");
 
     // adapter to the GPU, we are just using it to request a device & get a queue
     let adapter = instance
@@ -70,9 +75,23 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("./shader.wgsl"))),
     });
 
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Global Bind Group"),
+        entries: &[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::all(),
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
-        bind_group_layouts: &[],
+        bind_group_layouts: &[&bind_group_layout],
         push_constant_ranges: &[],
     });
 
@@ -82,7 +101,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .first()
         .expect("Incompatable adapter for this surface");
 
-    const VERTICES: &[glm::Vec2] = &[
+    const VERTICES: &[Vec2] = &[
         Vec2::new(0.1, 0.1), //
         Vec2::new(0.4, 0.2), //
         Vec2::new(0.2, 0.4), //
@@ -93,6 +112,31 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         label: Some("Triangle"),
         contents: bytemuck::cast_slice(VERTICES),
         usage: BufferUsages::VERTEX,
+    });
+
+    #[repr(C, align(4))]
+    #[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+    struct Globals {
+        color: Vec4,
+    }
+
+    let mut globals = Globals {
+        color: Vec4::new(0., 0., 1., 1.),
+    };
+
+    let uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        label: Some("Globals UBO"),
+        contents: bytemuck::bytes_of(&globals),
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+    });
+
+    let ubo_bind_group = device.create_bind_group(&BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(uniform_buffer.as_entire_buffer_binding()),
+        }],
     });
 
     use std::mem::size_of;
@@ -126,12 +170,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let window = &window;
 
+    let mut time = 0.0f32;
+
     event_loop
         .run(move |event, target| {
             // Have the closure take ownership of the resources.
             // `event_loop.run` never returns, therefore we must do this to ensure
             // the resources are properly cleaned up.
             let _ = (&instance, &adapter, &shader, &pipeline_layout);
+
+            window.request_redraw();
 
             if let Event::WindowEvent {
                 window_id: _,
@@ -160,6 +208,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             .texture
                             .create_view(&wgpu::TextureViewDescriptor::default());
 
+                        // update color in a sin-fasion
+                        time += 0.01;
+                        globals.color.x = time.cos().powi(2);
+                        globals.color.y = time.sin().powi(2);
+
+                        // update globals into the uniform buffer
+                        queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&globals));
+                        queue.submit([]);
+
                         let mut encoder =
                             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                                 label: Some("Triangle Enconder"),
@@ -187,13 +244,17 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                     timestamp_writes: None,
                                     occlusion_query_set: None,
                                 });
+                            rpass.set_bind_group(0, Some(&ubo_bind_group), &[]);
                             rpass.set_pipeline(&render_pipeline);
                             rpass.set_vertex_buffer(0, vertex_buffer.slice(0..));
 
-                            rpass.draw(0..3, 0..1);
+                            rpass.draw(0..(VERTICES.len() as u32), 0..1);
                         }
 
-                        queue.submit([encoder.finish()]);
+                        device.poll(wgpu::Maintain::WaitForSubmissionIndex(
+                            queue.submit([encoder.finish()]),
+                        ));
+
                         frame.present();
                     }
                     WindowEvent::CloseRequested => target.exit(),
@@ -201,12 +262,20 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 };
             }
         })
-        .unwrap();
+        .expect("Unhandled error ocurred when running event loop");
 }
 
 pub fn main() -> eyre::Result<()> {
+    // colored panics
     color_eyre::install()?;
-    env_logger::init();
+
+    // logging
+    env_logger::builder()
+        .parse_default_env()
+        .filter_level(log::LevelFilter::Debug)
+        .target(env_logger::Target::Stdout)
+        .init();
+    info!("hi");
 
     let event_loop = EventLoop::new()?;
 
