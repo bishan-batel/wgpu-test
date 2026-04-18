@@ -3,25 +3,30 @@ extern crate nalgebra_glm as glm;
 use std::borrow::Cow;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BufferUsages,
+    BufferUsages, VertexAttribute,
 };
 use winit::{
+    dpi::PhysicalSize,
     event::{Event, WindowEvent},
     event_loop::EventLoop,
     window::Window,
 };
 
-mod engine;
+use glm::Vec2;
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
-    let mut size = window.inner_size();
-    size.width = size.width.max(1);
-    size.height = size.height.max(1);
+    // window / framebuffer size
+    let size = window.inner_size().max(PhysicalSize {
+        width: 1,
+        height: 1,
+    });
 
+    // global WGPU instance
     let instance = wgpu::Instance::default();
 
     let surface = instance.create_surface(&window).unwrap();
 
+    // adapter to the GPU, we are just using it to request a device & get a queue
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
@@ -30,6 +35,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             compatible_surface: Some(&surface),
         })
         .await
+        // hard crash if we can't render anything
         .expect("Failed to find an appropriate adapter");
 
     // Create the logical device and command queue
@@ -44,6 +50,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                     .using_resolution(adapter.limits()),
 
+                // value memory usage over raw performance
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
             },
             None,
@@ -51,10 +58,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .await
         .expect("Failed to create device");
 
-    // Load the shaders from disk
+    let mut surface_config = surface
+        .get_default_config(&adapter, size.width, size.height)
+        .expect("Surface is not supported by the given adapter");
+
+    surface.configure(&device, &surface_config);
+
+    // Load the shader modules (wglsl)
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
-        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
+        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("./shader.wgsl"))),
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -69,51 +82,50 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .first()
         .expect("Incompatable adapter for this surface");
 
-    const VERTICES: &[f32] = &[
-        0.1, 0.1, //
-        0.4, 0.2, //
-        0.2, 0.4, //
+    const VERTICES: &[glm::Vec2] = &[
+        Vec2::new(0.1, 0.1), //
+        Vec2::new(0.4, 0.2), //
+        Vec2::new(0.2, 0.4), //
     ];
 
+    // create vertex buffer
     let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Triangle"),
-        contents: bytemuck::cast_slice::<f32, u8>(VERTICES),
+        contents: bytemuck::cast_slice(VERTICES),
         usage: BufferUsages::VERTEX,
     });
 
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &[wgpu::VertexBufferLayout {
-                array_stride: 2 * std::mem::size_of::<f32>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x2],
-            }],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[Some(swapchain_format.into())],
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
-        cache: None,
-    });
+    use std::mem::size_of;
 
-    let mut config = surface
-        .get_default_config(&adapter, size.width, size.height)
-        .unwrap();
-
-    surface.configure(&device, &config);
+    let render_pipeline: wgpu::RenderPipeline =
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Default Triangle Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: (2 * size_of::<f32>()) as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(swapchain_format.into())],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
 
     let window = &window;
+
     event_loop
         .run(move |event, target| {
             // Have the closure take ownership of the resources.
@@ -129,9 +141,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 match event {
                     WindowEvent::Resized(new_size) => {
                         // Reconfigure the surface with the new size
-                        config.width = new_size.width.max(1);
-                        config.height = new_size.height.max(1);
-                        surface.configure(&device, &config);
+                        surface_config.width = new_size.width.max(1);
+                        surface_config.height = new_size.height.max(1);
+                        surface.configure(&device, &surface_config);
 
                         // On macos the window needs to be redrawn manually after resizing
                         window.request_redraw();
@@ -150,7 +162,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                         let mut encoder =
                             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: None,
+                                label: Some("Triangle Enconder"),
                             });
 
                         // begin render pass(es)
@@ -181,7 +193,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             rpass.draw(0..3, 0..1);
                         }
 
-                        queue.submit(Some(encoder.finish()));
+                        queue.submit([encoder.finish()]);
                         frame.present();
                     }
                     WindowEvent::CloseRequested => target.exit(),
@@ -192,13 +204,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .unwrap();
 }
 
-pub fn main() {
-    let event_loop = EventLoop::new().unwrap();
-
-    let window = winit::window::WindowBuilder::new()
-        .build(&event_loop)
-        .unwrap();
-
+pub fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
     env_logger::init();
+
+    let event_loop = EventLoop::new()?;
+
+    let window = winit::window::WindowBuilder::new().build(&event_loop)?;
+
     pollster::block_on(run(event_loop, window));
+
+    Ok(())
 }
