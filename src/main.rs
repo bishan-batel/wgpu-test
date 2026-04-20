@@ -2,11 +2,11 @@ extern crate nalgebra_glm as glm;
 
 use log::info;
 use std::borrow::Cow;
+use wgpu::BindGroup;
 use wgpu::{
-    core::global::Global,
+    BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
+    BufferUsages, CurrentSurfaceTexture,
     util::{BufferInitDescriptor, DeviceExt},
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BufferAsyncError, BufferUsages,
 };
 use winit::{
     dpi::PhysicalSize,
@@ -16,6 +16,15 @@ use winit::{
 };
 
 use glm::{Vec2, Vec4};
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+use winit::platform::web::EventLoopExtWebSys;
+
+#[derive(Debug)]
+pub struct App {}
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
     // window / framebuffer size
@@ -45,21 +54,20 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     // Create the logical device and command queue
     let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
+        .request_device(&wgpu::DeviceDescriptor {
+            label: None,
 
-                required_features: wgpu::Features::empty(),
+            required_features: wgpu::Features::empty(),
 
-                // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
+            // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
+            required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                .using_resolution(adapter.limits()),
 
-                // value memory usage over raw performance
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
-            },
-            None,
-        )
+            // value memory usage over raw performance
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            trace: wgpu::Trace::Off,
+        })
         .await
         .expect("Failed to create device");
 
@@ -91,11 +99,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
+        bind_group_layouts: &[Some(&bind_group_layout)],
+        immediate_size: 0,
     });
 
     let swapchain_capabilities = surface.get_capabilities(&adapter);
+
     let swapchain_format = *swapchain_capabilities
         .formats
         .first()
@@ -164,8 +173,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
             cache: None,
+            multiview_mask: None,
         });
 
     let window = &window;
@@ -198,10 +207,13 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     }
 
                     WindowEvent::RedrawRequested => {
-                        // texture of the frame to render to
-                        let frame: wgpu::SurfaceTexture = surface
-                            .get_current_texture()
-                            .expect("Failed to acquire next swap chain texture");
+                        // get the current surface texture, if we can't get it then just dip this
+                        // frame
+                        let frame = match surface.get_current_texture() {
+                            CurrentSurfaceTexture::Success(surface_texture) => surface_texture,
+                            CurrentSurfaceTexture::Suboptimal(surface_texture) => surface_texture,
+                            _ => return,
+                        };
 
                         // view into the texture
                         let frame_tex_view = frame
@@ -239,10 +251,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                             }),
                                             store: wgpu::StoreOp::Store,
                                         },
+                                        depth_slice: None,
                                     })],
                                     depth_stencil_attachment: None,
                                     timestamp_writes: None,
                                     occlusion_query_set: None,
+                                    multiview_mask: None,
                                 });
                             rpass.set_bind_group(0, Some(&ubo_bind_group), &[]);
                             rpass.set_pipeline(&render_pipeline);
@@ -251,12 +265,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             rpass.draw(0..(VERTICES.len() as u32), 0..1);
                         }
 
-                        device.poll(wgpu::Maintain::WaitForSubmissionIndex(
-                            queue.submit([encoder.finish()]),
-                        ));
+                        device
+                            .poll(wgpu::PollType::Wait {
+                                submission_index: Some(queue.submit([encoder.finish()])),
+                                timeout: None,
+                            })
+                            .expect("Failed to poll");
 
                         frame.present();
                     }
+                    //
                     WindowEvent::CloseRequested => target.exit(),
                     _ => {}
                 };
@@ -269,17 +287,14 @@ pub fn main() -> eyre::Result<()> {
     // colored panics
     color_eyre::install()?;
 
-    // logging
-    env_logger::builder()
-        .parse_default_env()
-        .filter_level(log::LevelFilter::Debug)
-        .target(env_logger::Target::Stdout)
-        .init();
-    info!("hi");
+    tracing_subscriber::fmt().init();
 
     let event_loop = EventLoop::new()?;
 
-    let window = winit::window::WindowBuilder::new().build(&event_loop)?;
+    let window = winit::window::WindowBuilder::new()
+        .with_resizable(false)
+        .with_inner_size(PhysicalSize::new(800, 800))
+        .build(&event_loop)?;
 
     pollster::block_on(run(event_loop, window));
 

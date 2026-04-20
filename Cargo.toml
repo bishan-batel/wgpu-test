@@ -1,16 +1,23 @@
+# cargo-features = ["edition2024"]
+
 [package]
 name = "lgpu"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-wgpu = { version = "23.0.0", features = [
-	"wgsl",
-	"webgl",
-	"vulkan-portability",
+wgpu = { version = "29.0.1", features = [
+	"dx12",
+	"gles",
 	"metal",
+	"parking_lot",
+	"std",
+	"vulkan",
+	"webgpu",
+	"wgsl",
+	"serde",
+	"strict_asserts",
 ] }
-env_logger = "0.11.5"
 log = "0.4.22"
 pollster = "0.4.0"
 serde = "1.0.214"
@@ -19,8 +26,14 @@ thiserror = "2.0.1"
 winit = { version = "0.29", features = ["rwh_05", "serde"] }
 cfg-if = "1.0.0"
 wgpu-hal = "23.0.0"
-bytemuck = { version = "1.19.0", features = ["align_offset", "derive", "wasm_simd"] }
+bytemuck = { version = "1.19.0", features = [
+	"align_offset",
+	"derive",
+	"wasm_simd",
+] }
 nalgebra-glm = { version = "0.19.0", features = ["convert-bytemuck"] }
 eyre = "0.6.12"
 color-eyre = "0.6.5"
 tokio = "1.52.1"
+tracing = { version = "0.1.44", features = ["log"] }
+tracing-subscriber = "0.3.23"
