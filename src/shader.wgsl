@@ -2,7 +2,8 @@
 alias float4 = vec4<f32>;
 
 struct Globals {
-    color: vec4<f32>}
+    color: vec4<f32>
+}
 
 @group(0) @binding(0)
 var<uniform> globals: Globals;

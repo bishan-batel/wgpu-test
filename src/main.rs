@@ -1,11 +1,8 @@
 extern crate nalgebra_glm as glm;
 
-use log::info;
 use std::borrow::Cow;
-use wgpu::BindGroup;
 use wgpu::{
-    BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BufferUsages, CurrentSurfaceTexture,
+    BindGroupDescriptor, BindGroupLayoutEntry, BufferUsages, CurrentSurfaceTexture,
     util::{BufferInitDescriptor, DeviceExt},
 };
 use winit::{
@@ -164,6 +161,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 }],
                 compilation_options: Default::default(),
             },
+            //
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
