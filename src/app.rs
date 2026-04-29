@@ -2,9 +2,9 @@ use std::{borrow::Cow, sync::Arc};
 
 use encase::ShaderType;
 use glam::{UVec3, Vec2, Vec4};
-use log::info;
+use log::{error, info};
 use wgpu::{
-    BindGroupLayoutEntry, BufferUsages, CurrentSurfaceTexture,
+    BindGroupLayoutEntry, BufferUsages, CurrentSurfaceTexture, Device,
     util::{BufferInitDescriptor, DeviceExt},
 };
 use winit::{
@@ -63,7 +63,16 @@ impl State {
         });
 
         // global WGPU instance
-        let instance = wgpu::Instance::default();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            #[cfg(not(target_arch = "wasm32"))]
+            backends: wgpu::Backends::PRIMARY,
+            #[cfg(target_arch = "wasm32")]
+            backends: wgpu::Backends::GL,
+            display: None,
+            flags: Default::default(),
+            memory_budget_thresholds: Default::default(),
+            backend_options: Default::default(),
+        });
 
         let surface = instance
             .create_surface(window.clone())
@@ -89,8 +98,11 @@ impl State {
                 required_features: wgpu::Features::POLYGON_MODE_LINE,
 
                 // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
+                required_limits: if cfg!(target_arch = "wasm32") {
+                    wgpu::Limits::downlevel_webgl2_defaults()
+                } else {
+                    wgpu::Limits::default()
+                },
 
                 // value memory usage over raw performance
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
@@ -113,7 +125,7 @@ impl State {
             label: Some("Global Bind Group"),
             entries: &[BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::all(),
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -223,9 +235,9 @@ impl State {
         self.is_surface_configured = true;
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&mut self) -> eyre::Result<()> {
         if !self.is_surface_configured {
-            return;
+            return Ok(());
         }
 
         self.time += 0.01;
@@ -235,7 +247,11 @@ impl State {
         let frame = match self.surface.get_current_texture() {
             CurrentSurfaceTexture::Success(surface_texture) => surface_texture,
             CurrentSurfaceTexture::Suboptimal(surface_texture) => surface_texture,
-            _ => return,
+            CurrentSurfaceTexture::Timeout
+            | CurrentSurfaceTexture::Occluded
+            | CurrentSurfaceTexture::Validation
+            | CurrentSurfaceTexture::Outdated => return Ok(()), // skip this frame
+            CurrentSurfaceTexture::Lost => eyre::bail!("Lost WGPU Device"),
         };
 
         // view into the texture
@@ -308,6 +324,7 @@ impl State {
             .expect("Failed to poll");
 
         frame.present();
+        Ok(())
     }
 }
 
@@ -360,6 +377,8 @@ impl ApplicationHandler<State> for App {
             self.state = Some(pollster::block_on(State::new(window)).unwrap());
         }
 
+        info!("Resumed");
+
         #[cfg(target_arch = "wasm32")]
         {
             // Run the future asynchronously and use the
@@ -396,7 +415,9 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
-                state.render();
+                if let Err(report) = state.render() {
+                    error!("RedrawRequested Error while rendering: {report}");
+                }
             }
             WindowEvent::KeyboardInput {
                 event:
