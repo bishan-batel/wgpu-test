@@ -1,8 +1,9 @@
-extern crate nalgebra_glm as glm;
-
+use encase::ShaderType;
+use log::{error, info};
 use std::borrow::Cow;
 use wgpu::{
     BindGroupDescriptor, BindGroupLayoutEntry, BufferUsages, CurrentSurfaceTexture,
+    RenderPassColorAttachment, TextureDescriptor, TextureUsages, TextureViewDescriptor,
     util::{BufferInitDescriptor, DeviceExt},
 };
 use winit::{
@@ -12,7 +13,7 @@ use winit::{
     window::Window,
 };
 
-use glm::{Vec2, Vec4};
+use glam::{UVec3, Vec2, Vec4};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -20,8 +21,12 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::EventLoopExtWebSys;
 
-#[derive(Debug)]
-pub struct App {}
+// #[repr(C)]
+// #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+#[derive(ShaderType)]
+struct Globals {
+    color: Vec4,
+}
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
     // window / framebuffer size
@@ -54,7 +59,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .request_device(&wgpu::DeviceDescriptor {
             label: None,
 
-            required_features: wgpu::Features::empty(),
+            required_features: wgpu::Features::POLYGON_MODE_LINE,
 
             // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
             required_limits: wgpu::Limits::downlevel_webgl2_defaults()
@@ -77,21 +82,40 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     // Load the shader modules (wglsl)
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
-        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("./shader.wgsl"))),
+        // source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("./shader.wgsl"))),
+        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("./shader.slang.wgsl"))),
     });
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Global Bind Group"),
-        entries: &[BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::all(),
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
+        entries: &[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::all(),
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
             },
-            count: None,
-        }],
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::all(),
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::all(),
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                count: None,
+            },
+        ],
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -102,16 +126,21 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let swapchain_capabilities = surface.get_capabilities(&adapter);
 
-    let swapchain_format = *swapchain_capabilities
-        .formats
-        .first()
-        .expect("Incompatable adapter for this surface");
+    let Some(swapchain_format) = swapchain_capabilities.formats.first() else {
+        error!("Swapchain / Window Surface is incompatable with this device's adapter");
+        return;
+    };
+
+    let swapchain_format = *swapchain_format; // dereference
 
     const VERTICES: &[Vec2] = &[
-        Vec2::new(0.1, 0.1), //
-        Vec2::new(0.4, 0.2), //
-        Vec2::new(0.2, 0.4), //
+        Vec2::new(-1., -1.),
+        Vec2::new(1., -1.),
+        Vec2::new(1., 1.),
+        Vec2::new(-1., 1.),
     ];
+
+    const INDICES: &[UVec3] = &[UVec3::new(0, 1, 2), UVec3::new(0, 3, 2)];
 
     // create vertex buffer
     let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
@@ -120,32 +149,33 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         usage: BufferUsages::VERTEX,
     });
 
-    #[repr(C, align(4))]
-    #[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
-    struct Globals {
-        color: Vec4,
-    }
+    let index_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        label: Some("Triangle Index"),
+        contents: bytemuck::cast_slice(INDICES),
+        usage: BufferUsages::INDEX,
+    });
 
     let mut globals = Globals {
         color: Vec4::new(0., 0., 1., 1.),
     };
 
+    let globals_to_buf = |globals: &Globals| {
+        let mut buffer = encase::UniformBuffer::new(Vec::<u8>::new());
+        buffer.write(globals).unwrap();
+        buffer.into_inner()
+    };
+
     let uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Globals UBO"),
-        contents: bytemuck::bytes_of(&globals),
+        contents: &globals_to_buf(&globals),
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
 
-    let ubo_bind_group = device.create_bind_group(&BindGroupDescriptor {
-        label: None,
-        layout: &bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::Buffer(uniform_buffer.as_entire_buffer_binding()),
-        }],
-    });
+    info!("Created Buffers");
 
     use std::mem::size_of;
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
 
     let render_pipeline: wgpu::RenderPipeline =
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -161,14 +191,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 }],
                 compilation_options: Default::default(),
             },
-            //
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 compilation_options: Default::default(),
-                targets: &[Some(swapchain_format.into())],
+                targets: &[Some(swapchain_format.into()), Some(swapchain_format.into())],
             }),
-            primitive: wgpu::PrimitiveState::default(),
+            primitive: wgpu::PrimitiveState {
+                polygon_mode: wgpu::PolygonMode::Line,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             cache: None,
@@ -178,6 +210,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let window = &window;
 
     let mut time = 0.0f32;
+
+    let mut previous_frame: Option<wgpu::Texture> = None;
 
     event_loop
         .run(move |event, target| {
@@ -214,9 +248,36 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         };
 
                         // view into the texture
-                        let frame_tex_view = frame
-                            .texture
-                            .create_view(&wgpu::TextureViewDescriptor::default());
+                        let frame_tex_view =
+                            frame.texture.create_view(&TextureViewDescriptor::default());
+
+                        let canvas_descriptor = TextureDescriptor {
+                            label: None,
+                            size: frame.texture.size(),
+                            mip_level_count: frame.texture.mip_level_count(),
+                            sample_count: frame.texture.sample_count(),
+                            dimension: frame.texture.dimension(),
+                            format: frame.texture.format(),
+                            usage: frame.texture.usage()
+                                | TextureUsages::RENDER_ATTACHMENT
+                                | TextureUsages::COPY_DST
+                                | TextureUsages::COPY_SRC,
+                            view_formats: &[frame.texture.format()],
+                        };
+
+                        let previous_canvas = previous_frame
+                            .take()
+                            .unwrap_or_else(|| device.create_texture(&canvas_descriptor));
+
+                        let previous_canvas_view = previous_canvas.create_view(&Default::default());
+
+                        let previous_canvas_src = device.create_texture(&TextureDescriptor {
+                            usage: (frame.texture.usage()
+                                | TextureUsages::RENDER_ATTACHMENT
+                                | TextureUsages::COPY_DST
+                                | TextureUsages::TEXTURE_BINDING),
+                            ..canvas_descriptor.clone()
+                        });
 
                         // update color in a sin-fasion
                         time += 0.01;
@@ -224,7 +285,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         globals.color.y = time.sin().powi(2);
 
                         // update globals into the uniform buffer
-                        queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&globals));
+                        queue.write_buffer(&uniform_buffer, 0, &globals_to_buf(&globals));
                         queue.submit([]);
 
                         let mut encoder =
@@ -232,25 +293,81 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 label: Some("Triangle Enconder"),
                             });
 
+                        encoder.copy_texture_to_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &previous_canvas,
+                                mip_level: 0,
+                                origin: Default::default(),
+                                aspect: Default::default(),
+                            },
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &previous_canvas_src,
+                                mip_level: 0,
+                                origin: Default::default(),
+                                aspect: Default::default(),
+                            },
+                            wgpu::Extent3d {
+                                width: previous_canvas.width(),
+                                height: previous_canvas.height(),
+                                depth_or_array_layers: 0,
+                            },
+                        );
+
+                        let ubo_bind_group = device.create_bind_group(&BindGroupDescriptor {
+                            label: None,
+                            layout: &bind_group_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::Buffer(
+                                        uniform_buffer.as_entire_buffer_binding(),
+                                    ),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::TextureView(
+                                        &previous_canvas_src
+                                            .create_view(&TextureViewDescriptor::default()),
+                                    ),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: wgpu::BindingResource::Sampler(&sampler),
+                                },
+                            ],
+                        });
+
                         // begin render pass(es)
                         {
                             let mut rpass =
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                     label: None,
-                                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                        view: &frame_tex_view,
-                                        resolve_target: None,
-                                        ops: wgpu::Operations {
-                                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                                r: 0.2,
-                                                g: 0.1,
-                                                b: 0.1,
-                                                a: 1.,
-                                            }),
-                                            store: wgpu::StoreOp::Store,
-                                        },
-                                        depth_slice: None,
-                                    })],
+                                    color_attachments: &[
+                                        Some(RenderPassColorAttachment {
+                                            view: &frame_tex_view,
+                                            resolve_target: None,
+                                            ops: wgpu::Operations {
+                                                load: wgpu::LoadOp::Load,
+                                                // load: wgpu::LoadOp::Clear(wgpu::Color {
+                                                //     r: 0.2,
+                                                //     g: 0.1,
+                                                //     b: 0.1,
+                                                //     a: 1.,
+                                                // }),
+                                                store: wgpu::StoreOp::Store,
+                                            },
+                                            depth_slice: None,
+                                        }),
+                                        Some(RenderPassColorAttachment {
+                                            view: &previous_canvas_view,
+                                            depth_slice: None,
+                                            resolve_target: None,
+                                            ops: wgpu::Operations {
+                                                load: wgpu::LoadOp::Load,
+                                                store: wgpu::StoreOp::Store,
+                                            },
+                                        }),
+                                    ],
                                     depth_stencil_attachment: None,
                                     timestamp_writes: None,
                                     occlusion_query_set: None,
@@ -258,10 +375,17 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 });
                             rpass.set_bind_group(0, Some(&ubo_bind_group), &[]);
                             rpass.set_pipeline(&render_pipeline);
-                            rpass.set_vertex_buffer(0, vertex_buffer.slice(0..));
 
-                            rpass.draw(0..(VERTICES.len() as u32), 0..1);
+                            rpass.set_vertex_buffer(0, vertex_buffer.slice(0..));
+                            rpass.set_index_buffer(
+                                index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+
+                            rpass.draw_indexed(0..(3 * INDICES.len() as u32), 0, 0..1);
                         }
+
+                        previous_frame = Some(previous_canvas);
 
                         device
                             .poll(wgpu::PollType::Wait {
@@ -281,20 +405,24 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         .expect("Unhandled error ocurred when running event loop");
 }
 
-pub fn main() -> eyre::Result<()> {
-    // colored panics
-    color_eyre::install()?;
+// pub fn main() -> eyre::Result<()> {
+//     // colored panics
+//     color_eyre::install()?;
+//
+//     tracing_subscriber::fmt().init();
+//
+//     let event_loop = EventLoop::new()?;
+//
+//     let window = winit::window::WindowBuilder::new()
+//         .with_resizable(false)
+//         .with_inner_size(PhysicalSize::new(800, 800))
+//         .build(&event_loop)?;
+//
+//     pollster::block_on(run(event_loop, window));
+//
+//     Ok(())
+// }
 
-    tracing_subscriber::fmt().init();
-
-    let event_loop = EventLoop::new()?;
-
-    let window = winit::window::WindowBuilder::new()
-        .with_resizable(false)
-        .with_inner_size(PhysicalSize::new(800, 800))
-        .build(&event_loop)?;
-
-    pollster::block_on(run(event_loop, window));
-
-    Ok(())
+fn main() -> eyre::Result<()> {
+    lgpu::run()
 }

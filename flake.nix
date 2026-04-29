@@ -10,53 +10,54 @@
       let
         pkgs = import nixpkgs { inherit system; };
         naersk-lib = pkgs.callPackage naersk { };
-        libPath = with pkgs; [ 
-            libffi
-            wayland-protocols
-            wayland
-            libGL
+        libPath = with pkgs; (
+        pkgs.lib.optional pkgs.stdenv.isLinux [
+          wayland-protocols
+          wayland
+          libGL
+          libxcb
+          libX11
+          libX11
+          libXrandr
+          libXinerama
+          libXcursor
+          libXi
+          libxkbcommon
+          libglvnd
+        ]
+        ++ [
+          libffi
 
-            libxcb
-            libX11
-            libX11
-            libXrandr
-            libXinerama
-            libXcursor
-            libXi
+          spirv-tools
+          vulkan-volk
+          vulkan-tools
+          vulkan-loader
+          vulkan-headers
+          vulkan-validation-layers
+          slang
+        ]); 
 
-            libxkbcommon
-
-            libglvnd
-            spirv-tools
-            vulkan-volk
-            vulkan-tools
-            vulkan-loader
-            vulkan-headers
-            vulkan-validation-layers
-        ]; 
-      in
+        in
         {
-        defaultPackage = naersk-lib.buildPackage ./.;
-        devShell = with pkgs; mkShell {
-          nativeBuildInputs = [
-            wayland-protocols
-            libxkbcommon
-            wayland
-          ] ++ libPath;
+          defaultPackage = naersk-lib.buildPackage ./.;
+          devShell = with pkgs; mkShell {
+            packages = [
+              bacon
+            ];
+            nativeBuildInputs = [
+            ] ++ libPath;
 
-          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy wasm-pack pkg-config];
+            buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy wasm-pack pkg-config slang ];
 
-          env = {
-            RUST_SRC_PATH = rustPlatform.rustLibSrc;
+            env = {
+              RUST_SRC_PATH = rustPlatform.rustLibSrc;
 
-            LD_LIBRARY_PATH = if pkgs.stdenv.isDarwin 
-              then []
-              else pkgs.lib.makeLibraryPath libPath;
+              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libPath;
 
-            VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
-            VULKAN_SDK = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
+              VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
+              VULKAN_SDK = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
+            };
           };
-        };
-      }
-    );
+        }
+        );
 }
