@@ -10,24 +10,8 @@
       let
         pkgs = import nixpkgs { inherit system; };
         naersk-lib = pkgs.callPackage naersk { };
-        libPath = with pkgs; (
-        pkgs.lib.optional pkgs.stdenv.isLinux [
-          wayland-protocols
-          wayland
-          libGL
-          libxcb
-          libX11
-          libX11
-          libXrandr
-          libXinerama
-          libXcursor
-          libXi
-          libxkbcommon
-          libglvnd
-        ]
-        ++ [
+        libPath = with pkgs; [
           libffi
-
           spirv-tools
           vulkan-volk
           vulkan-tools
@@ -35,29 +19,40 @@
           vulkan-headers
           vulkan-validation-layers
           slang
+        ] ++ pkgs.lib.optional pkgs.stdenv.isLinux (with pkgs; [
+          wayland-protocols
+          wayland
+          libGL
+          libxcb
+          libX11
+          libXrandr
+          libXinerama
+          libXcursor
+          libXi
+          libxkbcommon
+          libglvnd
         ]); 
 
-        in
+      in
         {
-          defaultPackage = naersk-lib.buildPackage ./.;
-          devShell = with pkgs; mkShell {
-            packages = [
-              bacon
-            ];
-            nativeBuildInputs = [
-            ] ++ libPath;
+        defaultPackage = naersk-lib.buildPackage ./.;
+        devShell = pkgs.mkShell {
+          packages = with pkgs; [
+            bacon
+          ];
+          nativeBuildInputs = [ ] ++ libPath;
 
-            buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy wasm-pack pkg-config slang ];
+          buildInputs = with pkgs; [ cargo rustc rustfmt pre-commit rustPackages.clippy wasm-pack pkg-config slang ];
 
-            env = {
-              RUST_SRC_PATH = rustPlatform.rustLibSrc;
+          env = {
+            RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [];
 
-              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libPath;
 
-              VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
-              VULKAN_SDK = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
-            };
+            VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
+            VULKAN_SDK = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
           };
-        }
-        );
+        };
+      }
+    );
 }
