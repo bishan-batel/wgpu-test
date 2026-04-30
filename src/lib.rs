@@ -1,5 +1,5 @@
 mod app;
-mod engine;
+mod core;
 
 use crate::app::App;
 
