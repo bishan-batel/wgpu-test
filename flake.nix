@@ -18,7 +18,7 @@
           vulkan-loader
           vulkan-headers
           vulkan-validation-layers
-          slang
+          shader-slang
         ] ++ pkgs.lib.optional pkgs.stdenv.isLinux (with pkgs; [
           wayland-protocols
           wayland
@@ -42,7 +42,7 @@
           ];
           nativeBuildInputs = [ ] ++ libPath;
 
-          buildInputs = with pkgs; [ cargo rustc rustfmt pre-commit rustPackages.clippy wasm-pack pkg-config slang ];
+          buildInputs = with pkgs; [ cargo rustc rustfmt pre-commit rustPackages.clippy wasm-pack pkg-config shader-slang ];
 
           env = {
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
