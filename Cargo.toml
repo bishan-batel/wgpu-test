@@ -40,7 +40,14 @@ tokio = "1.52.1"
 tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = "0.3.23"
 encase = "0.12.0"
-glam = { version = "0.32.1", features = ["rand", "approx", "bytemuck", "serde", "encase", "zerocopy"] }
+glam = { version = "0.32.1", features = [
+	"rand",
+	"approx",
+	"bytemuck",
+	"serde",
+	"encase",
+	"zerocopy",
+] }
 bitflags = { version = "2.11.1", features = ["bytemuck", "serde", "std"] }
 
 [build-dependencies]
@@ -49,11 +56,12 @@ glob = "0.3.2"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.6"
 console_log = "1.0"
-wgpu = { version = "29.0.1", features = ["serde", "webgl"]}
+wgpu = { version = "29.0.1", features = ["serde", "webgl"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4.30"
-web-sys = { version = "0.3", features = [
-    "Document",
-    "Window",
-    "Element",
-]}
+web-sys = { version = "0.3", features = ["Document", "Window", "Element"] }
+
+[profile.profiling]
+inherits = "dev"
+opt-level = 1
+debug = true

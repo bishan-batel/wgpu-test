@@ -1,10 +1,10 @@
 use std::{borrow::Cow, sync::Arc};
 
 use encase::ShaderType;
-use glam::{UVec3, Vec2, Vec4};
+use glam::{UVec3, Vec2, Vec4, uvec3, vec2};
 use log::{error, info};
 use wgpu::{
-    BindGroupLayoutEntry, BufferUsages, CurrentSurfaceTexture, Device,
+    BindGroupLayoutEntry, BufferUsages, CurrentSurfaceTexture,
     util::{BufferInitDescriptor, DeviceExt},
 };
 use winit::{
@@ -16,19 +16,21 @@ use winit::{
 };
 
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
-
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::UnwrapThrowExt;
+use wasm_bindgen::{UnwrapThrowExt, prelude::*};
 
 const VERTICES: &[Vec2] = &[
-    Vec2::new(-1., -1.),
-    Vec2::new(1., -1.),
-    Vec2::new(1., 1.),
-    Vec2::new(-1., 1.),
+    vec2(-1., -1.),
+    vec2(1., -1.),
+    vec2(1., 1.),
+    vec2(-1., 1.),
+    //
 ];
 
-const INDICES: &[UVec3] = &[UVec3::new(0, 1, 2), UVec3::new(0, 3, 2)];
+const INDICES: &[UVec3] = &[
+    uvec3(0, 1, 2),
+    uvec3(0, 3, 2),
+    //
+];
 
 #[repr(C)]
 #[derive(Debug, ShaderType, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -265,8 +267,6 @@ impl State {
             buffer.into_inner()
         });
 
-        self.queue.submit([]);
-
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -332,6 +332,7 @@ pub struct App {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<State>>,
     state: Option<State>,
+    window: Option<Arc<Window>>,
 }
 
 impl App {
@@ -345,6 +346,7 @@ impl App {
             state: None,
             #[cfg(target_arch = "wasm32")]
             proxy,
+            window: None,
         }
     }
 }
@@ -374,7 +376,8 @@ impl ApplicationHandler<State> for App {
         {
             // If we are not on web we can use pollster to
             // await the
-            self.state = Some(pollster::block_on(State::new(window)).unwrap());
+            // self.state = Some(pollster::block_on(State::new(window)).unwrap());
+            self.window = Some(window);
         }
 
         info!("Resumed");
@@ -409,7 +412,7 @@ impl ApplicationHandler<State> for App {
             return;
         };
 
-        state.window.request_redraw();
+        // state.window.request_redraw();
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),

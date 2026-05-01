@@ -1,5 +1,6 @@
 mod app;
 mod core;
+mod world;
 
 use crate::app::App;
 

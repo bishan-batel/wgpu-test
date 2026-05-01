@@ -35,15 +35,8 @@ VertexOutput vs_main(VertexInput input) {
 FragmentOutput fs_main(VertexOutput input) {
   FragmentOutput output;
 
-  // output.color = globals.color;
-
-  float4 previous_color = texture.Sample(sampler, input.clip_position.xy);
-
+  output.color = globals.color;
   output.color.a = 1.0f;
-  output.color.rgb = globals.color.rgb;
-
-  // output.color2 = previous_color + output.color;
-  // output.color2.r += 0.01f;
 
   return output;
 }
