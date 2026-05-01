@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{BorrowMutError, RefCell},
     rc::{Rc, Weak},
 };
 
@@ -67,11 +67,7 @@ impl Node {
             }
 
             while let Some(_) = self.child_name_to_index(child_ref.name()) {
-                let new_name = StringName::from(format!("{}_", &child_ref.name));
-
-                child_ref
-                .try_rename(new_name)
-                .expect("Child in invalid state, try_rename should always suceed if the child has no parent");
+                child_ref.name = StringName::from(format!("{}_", &child_ref.name));
             }
 
             // update link in child
@@ -92,29 +88,61 @@ impl Node {
         Ok(())
     }
 
-    /// Attempts to rename this node to a new name.
+    /// Attempts to rename this node to the given name loosely, this may mangle the name if there
+    /// are name conflicts with siblings.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if it cannot borrow its parent mutably.
+    pub fn rename(
+        &mut self,
+        new_name: impl Into<StringName>,
+    ) -> Result<&StringName, BorrowMutError> {
+        self.set_name(new_name.into(), true)
+            .map_err(|err| match err {
+                RenameError::DuplicateName { .. } => unreachable!("set_name should not fail if there are duplicate names and the 'mangle' parameter is set on"),
+                RenameError::FailedToBorrowParent(err) => err,
+            })
+    }
+
+    /// Attempts to set the name of this node to a specific value.
     ///
     /// # Errors
     ///
     /// This function will return an error if it cannot borrow its parent mutably or if the given
     /// name conflicts with the name of a sibling node.
-    pub fn try_rename(&mut self, new_name: impl Into<StringName>) -> Result<(), RenameError> {
-        let new_name = new_name.into();
-
+    pub fn set_name(
+        &mut self,
+        new_name: StringName,
+        mangle_name: bool,
+    ) -> Result<&StringName, RenameError> {
         let Some(parent) = self.parent.upgrade() else {
             // if there is no parent then there is no restrictions
             self.name = new_name;
-            return Ok(());
+            return Ok(&self.name);
         };
 
         let mut parent = parent.try_borrow_mut()?;
 
-        // fail if a sibling has the same name
-        if let Some(sibling_idx) = parent.children_name_lookup.get(&new_name) {
+        // fail if a sibling has the same name and mangle name is turned off
+        if let Some(sibling_idx) = parent.children_name_lookup.get(&new_name)
+            && !mangle_name
+        {
             return Err(RenameError::DuplicateName {
                 sibling_index: *sibling_idx,
             });
         }
+
+        let new_name = {
+            let mut name = new_name;
+
+            // while a parent has a sibling of the name, just add '_' to it
+            while let Some(_) = parent.child_name_to_index(&name) {
+                name = StringName::from(format!("{}_", &self.name));
+            }
+
+            name
+        };
 
         let child_index = parent.children_name_lookup[&self.name];
 
@@ -127,7 +155,7 @@ impl Node {
 
         self.name = new_name;
 
-        Ok(())
+        Ok(&self.name)
     }
 
     /// How many children does this node have
@@ -155,8 +183,6 @@ impl Node {
 
 #[cfg(test)]
 mod test {
-    use std::rc::Rc;
-
     use crate::{core::name::StringName, scene::node::Node};
 
     #[test]
@@ -165,11 +191,19 @@ mod test {
 
         let mut node = node.borrow_mut();
 
-        assert_eq!(node.name(), &"Node".into());
+        assert_eq!(node.name(), "Node");
 
-        node.try_rename("Hello").unwrap();
+        node.set_name("Hello".into(), false).unwrap();
 
-        node.try_rename("Node").unwrap();
+        assert_eq!(node.name(), "Hello");
+
+        node.set_name("Node2".into(), false).unwrap();
+
+        assert_eq!(node.name(), "Node2");
+
+        node.rename(":)").unwrap();
+
+        assert_eq!(node.name(), ":)");
     }
 
     #[test]
@@ -185,9 +219,11 @@ mod test {
         assert!(parent.borrow().get_child_by_name(&child_name).is_none());
 
         let child = Node::new();
-        child.borrow_mut().try_rename(child_name.clone()).unwrap();
+        child.borrow_mut().rename(child_name.clone()).unwrap();
 
         parent.borrow_mut().add_child(child.clone()).unwrap();
+
+        assert!(child.borrow().has_parent());
 
         assert_eq!(parent.borrow().child_len(), 1);
         assert_eq!(child.borrow().name(), &child_name);
@@ -201,10 +237,7 @@ mod test {
             {
                 let first_child = parent.borrow().nth_child(0).unwrap();
 
-                first_child
-                    .borrow_mut()
-                    .try_rename(new_name.clone())
-                    .unwrap();
+                first_child.borrow_mut().rename(new_name.clone()).unwrap();
             }
 
             assert_eq!(&new_name, node.borrow().name());
