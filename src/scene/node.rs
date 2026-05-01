@@ -89,7 +89,7 @@ impl Node {
     }
 
     /// Attempts to rename this node to the given name loosely, this may mangle the name if there
-    /// are name conflicts with siblings.
+    /// are name conflicts with siblings. This returns the new name of this node.
     ///
     /// # Errors
     ///
@@ -156,6 +156,25 @@ impl Node {
         self.name = new_name;
 
         Ok(&self.name)
+    }
+
+    pub fn iter_children(&self) -> std::slice::Iter<'_, Rc<RefCell<Node>>> {
+        self.children.iter()
+    }
+
+    pub fn query<Q>(&self, buf: &mut Vec<Rc<RefCell<Node>>>, query: &Q)
+    where
+        Q: Fn(&Rc<RefCell<Node>>) -> bool,
+    {
+        for child in self.children.iter() {
+            if query(child) {
+                buf.push(child.clone());
+            }
+
+            if let Some(child) = child.try_borrow().ok() {
+                child.query(buf, query);
+            }
+        }
     }
 
     /// How many children does this node have
