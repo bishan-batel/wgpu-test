@@ -1,6 +1,6 @@
-mod app;
-mod core;
-mod world;
+pub mod app;
+pub mod core;
+pub mod scene;
 
 use crate::app::App;
 

@@ -18,7 +18,7 @@ pub trait Server {
     fn post_tick(&mut self) {}
 
     fn flags(&self) -> ServerTickFlags {
-        return ServerTickFlags::all();
+        ServerTickFlags::all()
     }
 
     fn ia_alive(&self) -> bool {

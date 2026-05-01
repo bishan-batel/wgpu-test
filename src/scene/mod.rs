@@ -1,5 +1,4 @@
-pub mod component;
-pub mod entity;
+pub mod node;
 
 #[derive(Debug)]
 pub struct World {}
