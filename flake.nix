@@ -46,8 +46,6 @@
           buildInputs = with pkgs; [ 
             cargo rustc rustfmt pre-commit rustPackages.clippy wasm-pack pkg-config 
             shader-slang 
-            wayland
-            wayland.dev libGL libxkbcommon
           ];
 
           env = {
