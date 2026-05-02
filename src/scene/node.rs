@@ -18,6 +18,7 @@ pub struct Node {
 
     parent: Weak<RefCell<Node>>,
 
+    /// self referential pointer
     self_ptr: Weak<RefCell<Node>>,
 }
 
