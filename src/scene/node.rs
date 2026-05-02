@@ -35,9 +35,13 @@ pub enum RenameError {
 impl Node {
     #[must_use]
     pub fn new() -> Rc<RefCell<Self>> {
+        Self::with_name("Node")
+    }
+
+    pub fn with_name(name: impl Into<StringName>) -> Rc<RefCell<Self>> {
         Rc::new_cyclic(|s| {
             RefCell::new(Self {
-                name: "Node".into(),
+                name: name.into(),
                 children: vec![],
                 parent: Weak::new(),
                 children_name_lookup: HashMap::new(),
@@ -262,5 +266,22 @@ mod test {
 
             assert_eq!(&new_name, node.borrow().name());
         }
+    }
+
+    #[test]
+    fn i_hate() -> eyre::Result<()> {
+        let parent = Node::with_name("Hi");
+
+        parent.borrow_mut().add_child(Node::with_name("Hello"))?;
+
+        let parent = parent.borrow_mut();
+
+        let child = parent
+            .get_child_by_name(&StringName::from("Hello"))
+            .unwrap();
+
+        child.borrow_mut().rename("Hello")?;
+
+        Ok(())
     }
 }
