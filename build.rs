@@ -1,7 +1,7 @@
 use std::{
     error::Error,
     path::PathBuf,
-    process::{Command, Stdio},
+    process::Command,
 };
 
 fn compile_shader(shader: PathBuf) -> Result<(), Box<dyn Error>> {
@@ -36,8 +36,11 @@ fn compile_shader(shader: PathBuf) -> Result<(), Box<dyn Error>> {
         for error in str::from_utf8(&output.stderr).unwrap().split('\n') {
             println!("cargo::error=[{:?}] {}", file_name, error);
         }
+
+        return Err(format!("Failed to compile shader: {}", relative_path.display()).into());
     }
-    return Ok(());
+
+    Ok(())
 }
 
 // build.rs
@@ -48,8 +51,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("cargo:rustc-link-lib=Xrandr");
         println!("cargo:rustc-link-lib=Xi");
         println!("cargo:rustc-link-lib=vulkan");
-    } else {
-        return Ok(());
     }
 
     println!("cargo::rerun-if-changed=build.rs");

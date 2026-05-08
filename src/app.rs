@@ -96,8 +96,7 @@ impl State {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-
-                required_features: wgpu::Features::POLYGON_MODE_LINE,
+                required_features: wgpu::Features::empty(),
 
                 // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
                 required_limits: if cfg!(target_arch = "wasm32") {
@@ -235,6 +234,7 @@ impl State {
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
         self.is_surface_configured = true;
+        self.window.request_redraw();
     }
 
     pub fn render(&mut self) -> eyre::Result<()> {
@@ -324,6 +324,7 @@ impl State {
             .expect("Failed to poll");
 
         frame.present();
+        self.window.request_redraw();
         Ok(())
     }
 }
@@ -374,10 +375,12 @@ impl ApplicationHandler<State> for App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // If we are not on web we can use pollster to
-            // await the
-            // self.state = Some(pollster::block_on(State::new(window)).unwrap());
-            self.window = Some(window);
+            let mut state = pollster::block_on(State::new(window.clone())).unwrap();
+            let size = window.inner_size();
+            state.resize(size.width, size.height);
+            self.window = Some(window.clone());
+            self.state = Some(state);
+            window.request_redraw();
         }
 
         info!("Resumed");
@@ -438,5 +441,12 @@ impl ApplicationHandler<State> for App {
         }
     }
 
-    // ...
+    #[cfg(target_arch = "wasm32")]
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, mut state: State) {
+        let size = state.window.inner_size();
+        state.resize(size.width, size.height);
+        state.window.request_redraw();
+        self.window = Some(state.window.clone());
+        self.state = Some(state);
+    }
 }
